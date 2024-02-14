@@ -1,6 +1,7 @@
 package com.junkfood.seal.ui.page.videolist
 
 import VideoStreamSVG
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -20,13 +21,17 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.ModalBottomSheetValue
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.rememberModalBottomSheetState
 import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,10 +41,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TriStateCheckbox
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -53,6 +59,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -72,6 +81,7 @@ import com.junkfood.seal.ui.component.DismissButton
 import com.junkfood.seal.ui.component.LargeTopAppBar
 import com.junkfood.seal.ui.component.MediaListItem
 import com.junkfood.seal.ui.component.SealDialog
+import com.junkfood.seal.ui.component.SealSearchBar
 import com.junkfood.seal.ui.component.VideoFilterChip
 import com.junkfood.seal.util.AUDIO_REGEX
 import com.junkfood.seal.util.DatabaseUtil
@@ -88,12 +98,23 @@ fun DownloadedVideoInfo.filterByType(
     videoFilter: Boolean = false,
     audioFilter: Boolean = true
 ): Boolean {
-//    Log.d(TAG, "filterByType: ${this.videoPath}")
     return if (!(videoFilter || audioFilter))
         true
     else if (audioFilter)
         this.videoPath.contains(Regex(AUDIO_REGEX))
     else !this.videoPath.contains(Regex(AUDIO_REGEX))
+}
+
+fun DownloadedVideoInfo.filterSort(
+    viewState: VideoListViewModel.VideoListViewState,
+    filterSet: Set<String>
+): Boolean {
+    return filterByType(
+        videoFilter = viewState.videoFilter,
+        audioFilter = viewState.audioFilter
+    ) && filterByExtractor(
+        filterSet.elementAtOrNull(viewState.activeFilterIndex)
+    )
 }
 
 fun DownloadedVideoInfo.filterByExtractor(extractor: String?): Boolean {
@@ -102,29 +123,37 @@ fun DownloadedVideoInfo.filterByExtractor(extractor: String?): Boolean {
 
 private const val TAG = "VideoListPage"
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
 fun VideoListPage(
     videoListViewModel: VideoListViewModel = hiltViewModel(), onBackPressed: () -> Unit
 ) {
-    val viewState = videoListViewModel.stateFlow.collectAsStateWithLifecycle().value
-    val videoListFlow = videoListViewModel.videoListFlow
+    val viewState by videoListViewModel.stateFlow.collectAsStateWithLifecycle()
+    val fullVideoList by videoListViewModel.videoListFlow.collectAsStateWithLifecycle(emptyList())
+    val searchedVideoList by videoListViewModel.searchedVideoListFlow.collectAsStateWithLifecycle(
+        emptyList()
+    )
 
-    val videoList = videoListFlow.collectAsState(ArrayList()).value
-//    val videoList = emptyList<DownloadedVideoInfo>()
+    val videoList = if (viewState.isSearching) searchedVideoList else fullVideoList
+    val filterSet by videoListViewModel.filterSetFlow.collectAsState(mutableSetOf())
+
     val scrollBehavior =
-        if (videoList.isNotEmpty()) TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+        if (fullVideoList.isNotEmpty()) TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
             rememberTopAppBarState(),
             canScroll = { true }
         ) else TopAppBarDefaults.pinnedScrollBehavior()
-    val scope = rememberCoroutineScope()
 
-    val fileSizeMap = remember(videoList.size) {
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val softKeyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
+
+    val fileSizeMap = remember(fullVideoList.size) {
         mutableMapOf<Int, Long>().apply {
             putAll(videoList.map { Pair(it.id, it.videoPath.getFileSize()) })
         }
     }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(initialValue = ModalBottomSheetValue.Hidden)
 
     var currentVideoInfoId by rememberSaveable { mutableIntStateOf(0) }
 
@@ -136,39 +165,29 @@ fun VideoListPage(
 
     var isSelectEnabled by remember { mutableStateOf(false) }
     var showRemoveMultipleItemsDialog by remember { mutableStateOf(false) }
-
-    val filterSet = videoListViewModel.filterSetFlow.collectAsState(mutableSetOf()).value
-    fun DownloadedVideoInfo.filterSort(viewState: VideoListViewModel.VideoListViewState): Boolean {
-        return filterByType(
-            videoFilter = viewState.videoFilter,
-            audioFilter = viewState.audioFilter
-        ) && filterByExtractor(
-            filterSet.elementAtOrNull(viewState.activeFilterIndex)
-        )
-    }
+    val lazyGridState = rememberLazyGridState()
 
     @Composable
     fun FilterChips(modifier: Modifier = Modifier) {
         Row(
             modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(8.dp)
-                .selectableGroup()
+                .selectableGroup(),
         ) {
-            VideoFilterChip(
-                selected = viewState.audioFilter,
-                onClick = { videoListViewModel.clickAudioFilter() },
-                label = stringResource(id = R.string.audio),
-            )
+            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                VideoFilterChip(
+                    selected = viewState.audioFilter,
+                    onClick = { videoListViewModel.clickAudioFilter() },
+                    label = stringResource(id = R.string.audio),
+                )
 
-            VideoFilterChip(
-                selected = viewState.videoFilter,
-                onClick = { videoListViewModel.clickVideoFilter() },
-                label = stringResource(id = R.string.video),
-            )
-            if (filterSet.size > 1) {
-                Row {
-                    Divider(
+                VideoFilterChip(
+                    selected = viewState.videoFilter,
+                    onClick = { videoListViewModel.clickVideoFilter() },
+                    label = stringResource(id = R.string.video),
+                )
+                if (filterSet.size > 1) {
+                    VerticalDivider(
                         modifier = Modifier
                             .padding(horizontal = 6.dp)
                             .height(24.dp)
@@ -219,7 +238,7 @@ fun VideoListPage(
 
     val visibleItemCount = remember(
         videoList, viewState
-    ) { mutableStateOf(videoList.count { it.filterSort(viewState) }) }
+    ) { mutableStateOf(videoList.count { it.filterSort(viewState, filterSet) }) }
 
     val checkBoxState by remember(selectedItemIds, visibleItemCount) {
         derivedStateOf {
@@ -235,8 +254,19 @@ fun VideoListPage(
     var showRemoveDialog by remember { mutableStateOf(false) }
     var showBottomSheet by remember { mutableStateOf(false) }
 
-    BackHandler(isSelectEnabled) {
-        isSelectEnabled = false
+    BackHandler(isSelectEnabled || viewState.isSearching) {
+        if (isSelectEnabled) {
+            isSelectEnabled = false
+        } else {
+            videoListViewModel.toggleSearch(false)
+        }
+    }
+
+
+    LaunchedEffect(sheetState.targetValue, isSelectEnabled) {
+        if (showBottomSheet || isSelectEnabled) {
+            softKeyboardController?.hide()
+        }
     }
 
     Scaffold(
@@ -254,10 +284,13 @@ fun VideoListPage(
                         onBackPressed()
                     }
                 }, actions = {
-                    if (videoList.isNotEmpty())
+                    if (fullVideoList.isNotEmpty()) {
                         IconToggleButton(
                             modifier = Modifier,
-                            onCheckedChange = { isSelectEnabled = !isSelectEnabled },
+                            onCheckedChange = {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                isSelectEnabled = it
+                            },
                             checked = isSelectEnabled
                         ) {
                             Icon(
@@ -265,6 +298,26 @@ fun VideoListPage(
                                 contentDescription = stringResource(R.string.multiselect_mode)
                             )
                         }
+                        IconToggleButton(
+                            modifier = Modifier,
+                            onCheckedChange = {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                videoListViewModel.toggleSearch(it)
+                                if (it) {
+                                    scope.launch {
+                                        delay(50)
+                                        lazyGridState.animateScrollToItem(0)
+                                    }
+                                }
+                            },
+                            checked = viewState.isSearching
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Search,
+                                contentDescription = stringResource(R.string.search)
+                            )
+                        }
+                    }
                 }, scrollBehavior = scrollBehavior
             )
         }, bottomBar = {
@@ -288,7 +341,7 @@ fun VideoListPage(
                                 else -> {
                                     for (item in videoList) {
                                         if (!selectedItemIds.contains(item.id)
-                                            && item.filterSort(viewState)
+                                            && item.filterSort(viewState, filterSet)
                                         ) {
                                             selectedItemIds.add(item.id)
                                         }
@@ -318,7 +371,7 @@ fun VideoListPage(
             }
         }
     ) { innerPadding ->
-        if (videoList.isEmpty())
+        if (fullVideoList.isEmpty())
             Box(
                 modifier = Modifier.fillMaxSize(),
             ) {
@@ -345,13 +398,31 @@ fun VideoListPage(
         }
         val span: (LazyGridItemSpanScope) -> GridItemSpan = { GridItemSpan(cellCount) }
         LazyVerticalGrid(
-            modifier = Modifier
-                .padding(innerPadding), columns = GridCells.Fixed(cellCount)
+            modifier = Modifier.padding(innerPadding),
+            columns = GridCells.Fixed(cellCount),
+            state = lazyGridState
         ) {
-            if (videoList.isNotEmpty())
+            if (fullVideoList.isNotEmpty()) {
                 item(span = span) {
-                    FilterChips(Modifier.fillMaxWidth())
+                    Column {
+                        AnimatedVisibility(visible = viewState.isSearching) {
+                            SealSearchBar(
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp)
+                                    .padding(vertical = 8.dp),
+                                text = viewState.searchText,
+                                onValueChange = videoListViewModel::updateSearchText
+                            )
+                        }
+                        FilterChips(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        )
+                    }
                 }
+
+            }
             for (info in videoList) {
                 val fileSize =
                     fileSizeMap.getOrElse(info.id) { File(info.videoPath).length() }
@@ -361,7 +432,7 @@ fun VideoListPage(
                     contentType = { info.videoPath.contains(AUDIO_REGEX) }) {
                     with(info) {
                         AnimatedVisibility(
-                            visible = info.filterSort(viewState),
+                            visible = info.filterSort(viewState, filterSet),
                             exit = shrinkVertically() + fadeOut(),
                             enter = expandVertically() + fadeIn()
                         ) {

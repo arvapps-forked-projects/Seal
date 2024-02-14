@@ -8,6 +8,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
@@ -18,13 +19,31 @@ private const val TAG = "VideoListViewModel"
 @HiltViewModel
 class VideoListViewModel @Inject constructor() : ViewModel() {
 
+
+    private val mutableStateFlow = MutableStateFlow(VideoListViewState())
+    val stateFlow = mutableStateFlow.asStateFlow()
+    private val viewState get() = stateFlow.value
+
     private val _mediaInfoFlow = DatabaseUtil.getMediaInfo()
 
-    private val mediaInfoFlow: Flow<List<DownloadedVideoInfo>> =
+    val videoListFlow: Flow<List<DownloadedVideoInfo>> =
         _mediaInfoFlow.map { it.reversed().sortedBy { info -> info.filterByType() } }
 
+    val searchedVideoListFlow = videoListFlow.combine(stateFlow) { list, state ->
+        if (!state.isSearching || state.searchText.isBlank()) list
+        else list.filter {
+            state.searchText.let { text ->
+                with(it) {
+                    videoTitle.contains(text, ignoreCase = true)
+                            || videoAuthor.contains(text, ignoreCase = true)
+                            || extractor.contains(text, ignoreCase = true)
+                            || videoPath.contains(text, ignoreCase = true)
+                }
+            }
+        }
+    }
 
-    val filterSetFlow = _mediaInfoFlow.map { infoList ->
+    val filterSetFlow = searchedVideoListFlow.map { infoList ->
         mutableSetOf<String>().apply {
             infoList.forEach {
                 this.add(it.extractor)
@@ -32,10 +51,7 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         }
     }
 
-    private val mutableStateFlow = MutableStateFlow(VideoListViewState())
-    val stateFlow = mutableStateFlow.asStateFlow()
 
-    val videoListFlow = mediaInfoFlow
     fun clickVideoFilter() {
         if (mutableStateFlow.value.videoFilter) mutableStateFlow.update { it.copy(videoFilter = false) }
         else mutableStateFlow.update { it.copy(videoFilter = true, audioFilter = false) }
@@ -55,10 +71,20 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         else mutableStateFlow.update { it.copy(activeFilterIndex = index) }
     }
 
+    fun toggleSearch(isSearching: Boolean = !viewState.isSearching) {
+        mutableStateFlow.update { it.copy(isSearching = isSearching, searchText = "") }
+    }
+
+    fun updateSearchText(text: String) {
+        mutableStateFlow.update { it.copy(searchText = text) }
+    }
+
     data class VideoListViewState(
         val activeFilterIndex: Int = -1,
         val videoFilter: Boolean = false,
-        val audioFilter: Boolean = false
+        val audioFilter: Boolean = false,
+        val isSearching: Boolean = false,
+        val searchText: String = "",
     )
 
 }
