@@ -1,13 +1,17 @@
 package com.junkfood.seal.ui.page.download
 
 import android.content.Intent
-import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -23,14 +28,18 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Subtitles
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSliderState
 import androidx.compose.material3.Scaffold
@@ -57,6 +66,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,14 +83,19 @@ import com.junkfood.seal.ui.component.FormatVideoPreview
 import com.junkfood.seal.ui.component.HorizontalDivider
 import com.junkfood.seal.ui.component.PreferenceInfo
 import com.junkfood.seal.ui.component.SealDialog
+import com.junkfood.seal.ui.component.SealSearchBar
 import com.junkfood.seal.ui.component.TextButtonWithIcon
 import com.junkfood.seal.ui.component.VideoFilterChip
 import com.junkfood.seal.ui.page.settings.general.DialogCheckBoxItem
 import com.junkfood.seal.ui.theme.SealTheme
+import com.junkfood.seal.ui.theme.generateLabelColor
 import com.junkfood.seal.util.EXTRACT_AUDIO
 import com.junkfood.seal.util.Format
 import com.junkfood.seal.util.MERGE_MULTI_AUDIO_STREAM
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
+import com.junkfood.seal.util.PreferenceUtil.getString
+import com.junkfood.seal.util.PreferenceUtil.updateString
+import com.junkfood.seal.util.SUBTITLE_LANGUAGE
 import com.junkfood.seal.util.SubtitleFormat
 import com.junkfood.seal.util.VIDEO_CLIP
 import com.junkfood.seal.util.VideoClip
@@ -97,24 +113,63 @@ fun FormatPage(downloadViewModel: DownloadViewModel, onBackPressed: () -> Unit =
     if (videoInfo.formats.isNullOrEmpty()) return
     val audioOnly = EXTRACT_AUDIO.getBoolean()
     val mergeAudioStream = MERGE_MULTI_AUDIO_STREAM.getBoolean()
+    val subtitleLanguageRegex = SUBTITLE_LANGUAGE.getString()
+    val initialSelectedSubtitles =
+        videoInfo.run { subtitles.keys + automaticCaptions.keys }
+            .filterWithRegex(subtitleLanguageRegex)
+
+    var showUpdateSubtitleDialog by remember { mutableStateOf(false) }
+
+    var diffSubtitleLanguages by remember { mutableStateOf(emptySet<String>()) }
+
     FormatPageImpl(
         videoInfo = videoInfo,
         onBackPressed = onBackPressed,
         audioOnly = audioOnly,
         mergeAudioStream = !audioOnly && mergeAudioStream,
+        selectedSubtitleCodes = initialSelectedSubtitles,
         isClippingAvailable = VIDEO_CLIP.getBoolean() && (videoInfo.duration ?: .0) >= 0
-    ) { formatList, videoClips, splitByChapter, title, subtitleLanguages ->
-        Log.d(TAG, formatList.toString())
+    ) { formatList, videoClips, splitByChapter, title, selectedSubtitleCodes ->
+
+        diffSubtitleLanguages = selectedSubtitleCodes.run {
+            this - this.filterWithRegex(subtitleLanguageRegex)
+        }.toSet()
+
         Downloader.downloadVideoWithConfigurations(
             videoInfo = videoInfo,
             formatList = formatList,
             videoClips = videoClips,
             splitByChapter = splitByChapter,
             newTitle = title,
-            selectedSubtitleLang = subtitleLanguages,
+            selectedSubtitleCodes = selectedSubtitleCodes,
         )
-        onBackPressed()
+
+        if (diffSubtitleLanguages.isNotEmpty()) {
+            showUpdateSubtitleDialog = true
+        } else {
+            onBackPressed()
+        }
     }
+
+    if (showUpdateSubtitleDialog) {
+        UpdateSubtitleLanguageDialog(
+            modifier = Modifier,
+            languages = diffSubtitleLanguages,
+            onDismissRequest = {
+                showUpdateSubtitleDialog = false
+                onBackPressed()
+            },
+            onConfirm = {
+                SUBTITLE_LANGUAGE.updateString(
+                    (diffSubtitleLanguages + subtitleLanguageRegex).joinToString(
+                        separator = ",",
+                    ) { it })
+                showUpdateSubtitleDialog = false
+                onBackPressed()
+            }
+        )
+    }
+
 }
 
 
@@ -123,32 +178,44 @@ private const val NOT_SELECTED = -1
 @Preview
 @Composable
 private fun FormatPagePreview() {
-    val captionsMap = buildMap {
-        repeat(4) {
-            put(
-                "translated-$it", listOf(
-                    SubtitleFormat(
-                        ext = "ass",
-                        url = "",
-                        name = "Translated"
-                    )
-                )
+    val captionsMap = mapOf(
+        "en-en" to listOf(SubtitleFormat(ext = "", url = "", name = "English from English")),
+        "ja-en" to listOf(SubtitleFormat(ext = "", url = "", name = "Japanese from English")),
+        "zh-Hans-en" to listOf(
+            SubtitleFormat(
+                ext = "",
+                url = "",
+                name = "Chinese (Simplified) from English"
             )
-        }
-    }
+        ),
+        "zh-Hant-en" to listOf(
+            SubtitleFormat(
+                ext = "",
+                url = "",
+                name = "Chinese (Traditional) from English"
+            )
+        ),
+    )
 
     val subMap = buildMap {
-        repeat(3) {
-            put(
-                "en$it", listOf(
-                    SubtitleFormat(
-                        ext = "ass",
-                        url = "",
-                        name = "English"
-                    )
+        put(
+            "en", listOf(
+                SubtitleFormat(
+                    ext = "ass",
+                    url = "",
+                    name = "English"
                 )
             )
-        }
+        )
+        put(
+            "ja", listOf(
+                SubtitleFormat(
+                    ext = "ass",
+                    url = "",
+                    name = "Japanese"
+                )
+            )
+        )
     }
     val videoInfo =
         VideoInfo(
@@ -187,7 +254,12 @@ private fun FormatPagePreview() {
             duration = 100000.0
         )
     SealTheme {
-        FormatPageImpl(videoInfo = videoInfo, isClippingAvailable = true, mergeAudioStream = true)
+        FormatPageImpl(
+            videoInfo = videoInfo,
+            isClippingAvailable = true,
+            mergeAudioStream = true,
+            selectedSubtitleCodes = setOf("en", "ja-en")
+        )
     }
 }
 
@@ -198,6 +270,7 @@ fun FormatPageImpl(
     audioOnly: Boolean = false,
     mergeAudioStream: Boolean = false,
     isClippingAvailable: Boolean = false,
+    selectedSubtitleCodes: Set<String>,
     onBackPressed: () -> Unit = {},
     onDownloadPressed: (List<Format>, List<VideoClip>, Boolean, String, List<String>) -> Unit = { _, _, _, _, _ -> }
 ) {
@@ -272,7 +345,8 @@ fun FormatPageImpl(
     }
 
 
-    val selectedLanguageList = remember { mutableStateListOf<String>() }
+    val selectedLanguageList =
+        remember { mutableStateListOf<String>().apply { addAll(selectedSubtitleCodes) } }
 
     Scaffold(modifier = Modifier
         .fillMaxSize()
@@ -693,6 +767,54 @@ private fun RenameDialog(
     })
 }
 
+private fun (Map<String, List<SubtitleFormat>>).filterWithSearchText(searchText: String): Map<String, List<SubtitleFormat>> {
+    return this.filter {
+        it.run {
+            searchText.isBlank()
+                    || key.contains(searchText, ignoreCase = true)
+                    || value.any { format ->
+                format.name?.contains(searchText, ignoreCase = true) ?: false
+            }
+        }
+    }
+}
+
+private fun Map<String, List<SubtitleFormat>>.sortedWithSelection(selectedKeys: List<String>): Map<String, List<SubtitleFormat>> {
+    return this.toList().sortedWith { entry1, entry2 ->
+        when {
+            entry1.first in selectedKeys && entry2.first in selectedKeys -> entry1.compareTo(entry2) // Both in selectedKeys - equal priority
+            entry1.first in selectedKeys -> -1 // str1 has priority
+            entry2.first in selectedKeys -> 1 // str2 has priority
+            else -> entry1.compareTo(entry2)
+        }
+    }.toMap()
+}
+
+/**
+ * Prioritizes comparison of subtitle names (via `getSubtitleName()`) if available,
+ * otherwise compares the `key` portion of the pairs.
+ *
+ * Examples: `zh` (Chinese) should be greater than `en` (English) according to their names
+ */
+private fun (Pair<String, List<SubtitleFormat>>).compareTo(
+    other: (Pair<String, List<SubtitleFormat>>),
+): Int {
+    val (key, list) = this
+    val (otherKey, otherList) = other
+
+    val name = list.getSubtitleName()
+    val otherName = otherList.getSubtitleName()
+
+    return if (name != null && otherName != null) {
+        name.compareTo(otherName)
+    } else {
+        key.compareTo(otherKey)
+    }
+}
+
+private fun (List<SubtitleFormat>).getSubtitleName(): String? = firstOrNull()?.name
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SubtitleSelectionDialog(
     suggestedSubtitles: Map<String, List<SubtitleFormat>>,
@@ -701,8 +823,14 @@ private fun SubtitleSelectionDialog(
     onDismissRequest: () -> Unit = {},
     onConfirm: (List<String>) -> Unit = {}
 ) {
+    var searchText by remember { mutableStateOf("") }
     val selectedSubtitles =
         remember { mutableStateListOf<String>().apply { addAll(selectedSubtitleCodes) } }
+
+    val suggestedSubtitlesFiltered =
+        suggestedSubtitles.filterWithSearchText(searchText).sortedWithSelection(selectedSubtitles)
+    val autoCaptionsFiltered =
+        autoCaptions.filterWithSearchText(searchText).sortedWithSelection(selectedSubtitles)
 
     SealDialog(
         onDismissRequest = onDismissRequest,
@@ -719,19 +847,29 @@ private fun SubtitleSelectionDialog(
         icon = { Icon(imageVector = Icons.Outlined.Subtitles, contentDescription = null) },
         text = {
             Column {
-                HorizontalDivider()
+                if (autoCaptions.size + suggestedSubtitles.size > 5) {
+                    SealSearchBar(
+                        text = searchText,
+                        placeholderText = stringResource(R.string.search_in_subtitles),
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    ) { searchText = it }
+                }
+
                 LazyColumn(contentPadding = PaddingValues(vertical = 12.dp)) {
-                    item {
-                        Text(
-                            text = stringResource(id = R.string.suggested),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
-                        )
-                    }
-                    for ((code, formats) in suggestedSubtitles) {
+                    if (suggestedSubtitlesFiltered.isNotEmpty()) {
                         item {
+                            Text(
+                                text = stringResource(id = R.string.suggested),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    for ((code, formats) in suggestedSubtitlesFiltered) {
+                        item(key = code) {
                             DialogCheckBoxItem(
+                                modifier = Modifier.animateItemPlacement(),
                                 checked = selectedSubtitles.contains(code),
                                 onClick = {
                                     if (selectedSubtitles.contains(code)) {
@@ -743,7 +881,8 @@ private fun SubtitleSelectionDialog(
                                 text = formats.first().run { name ?: protocol ?: code })
                         }
                     }
-                    if (autoCaptions.isNotEmpty()) {
+
+                    if (autoCaptionsFiltered.isNotEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.auto_subtitle),
@@ -755,9 +894,10 @@ private fun SubtitleSelectionDialog(
                                 )
                             )
                         }
-                        for ((code, formats) in autoCaptions) {
-                            item {
+                        for ((code, formats) in autoCaptionsFiltered) {
+                            item(key = code) {
                                 DialogCheckBoxItem(
+                                    modifier = Modifier.animateItemPlacement(),
                                     checked = selectedSubtitles.contains(code),
                                     onClick = {
                                         if (selectedSubtitles.contains(code)) {
@@ -779,32 +919,44 @@ private fun SubtitleSelectionDialog(
 @Preview
 @Composable
 private fun SubtitleSelectionDialogPreview() {
-    val captionsMap = buildMap {
-        repeat(4) {
-            put(
-                "translated-$it", listOf(
-                    SubtitleFormat(
-                        ext = "ass",
-                        url = "",
-                        name = "Translated"
-                    )
-                )
+    val captionsMap = mapOf(
+        "en-en" to listOf(SubtitleFormat(ext = "", url = "", name = "English from English")),
+        "ja-en" to listOf(SubtitleFormat(ext = "", url = "", name = "Japanese from English")),
+        "zh-Hans-en" to listOf(
+            SubtitleFormat(
+                ext = "",
+                url = "",
+                name = "Chinese (Simplified) from English"
             )
-        }
-    }
+        ),
+        "zh-Hant-en" to listOf(
+            SubtitleFormat(
+                ext = "",
+                url = "",
+                name = "Chinese (Traditional) from English"
+            )
+        ),
+    )
 
     val subMap = buildMap {
-        repeat(3) {
-            put(
-                "en$it", listOf(
-                    SubtitleFormat(
-                        ext = "ass",
-                        url = "",
-                        name = "English"
-                    )
+        put(
+            "en", listOf(
+                SubtitleFormat(
+                    ext = "ass",
+                    url = "",
+                    name = "English"
                 )
             )
-        }
+        )
+        put(
+            "ja", listOf(
+                SubtitleFormat(
+                    ext = "ass",
+                    url = "",
+                    name = "Japanese"
+                )
+            )
+        )
     }
 
     SealTheme {
@@ -838,4 +990,85 @@ private fun ClickableTextAction(
                 .padding(vertical = 4.dp, horizontal = 12.dp)
         )
     }
+}
+
+fun <T : Collection<String>> T.filterWithRegex(subtitleLanguageRegex: String): Set<String> {
+    val regexGroup = subtitleLanguageRegex.split(',')
+    return filter { language ->
+        regexGroup.any {
+            language.contains(Regex(it))
+        }
+    }.toSet()
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+@Preview
+fun UpdateSubtitleLanguageDialog(
+    modifier: Modifier = Modifier,
+    languages: Set<String> = setOf("en", "ja"),
+    onDismissRequest: () -> Unit = {},
+    onConfirm: () -> Unit = {}
+) {
+    AlertDialog(onDismissRequest = onDismissRequest,
+        title = {
+            Text(
+                text = stringResource(R.string.update_subtitle_languages),
+                textAlign = TextAlign.Center
+            )
+        },
+        icon = {
+            Icon(
+                imageVector = Icons.Filled.Subtitles,
+                contentDescription = null
+            )
+        },
+        text = {
+            Column {
+                Text(text = stringResource(R.string.update_language_msg))
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    languages.forEach {
+                        Row(
+                            modifier = Modifier,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .size(16.dp)
+                                    .background(
+                                        color = it
+                                            .hashCode()
+                                            .generateLabelColor(), shape = CircleShape
+                                    )
+                                    .clearAndSetSemantics { }
+                            ) {}
+                            Text(
+                                text = it,
+                                modifier = Modifier,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text(text = stringResource(id = R.string.okay))
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismissRequest) {
+                Text(text = stringResource(id = R.string.no_thanks))
+            }
+        })
+
 }
