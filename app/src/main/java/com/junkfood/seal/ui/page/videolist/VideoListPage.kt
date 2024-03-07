@@ -1,7 +1,6 @@
 package com.junkfood.seal.ui.page.videolist
 
 import VideoStreamSVG
-import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
@@ -27,11 +27,15 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.ModalBottomSheetValue
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.automirrored.outlined.AssignmentReturn
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.rememberModalBottomSheetState
 import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,6 +76,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.junkfood.seal.App
 import com.junkfood.seal.R
 import com.junkfood.seal.database.DownloadedVideoInfo
+import com.junkfood.seal.ui.common.HapticFeedback.longPressHapticFeedback
+import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.common.LocalWindowWidthState
 import com.junkfood.seal.ui.common.SVGImage
 import com.junkfood.seal.ui.component.BackButton
@@ -165,6 +171,10 @@ fun VideoListPage(
 
     var isSelectEnabled by remember { mutableStateOf(false) }
     var showRemoveMultipleItemsDialog by remember { mutableStateOf(false) }
+
+    var showExportDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
+
     val lazyGridState = rememberLazyGridState()
 
     @Composable
@@ -208,7 +218,16 @@ fun VideoListPage(
     }
 
     val selectedItemIds =
-        remember(videoList, isSelectEnabled, viewState) { mutableStateListOf<Int>() }
+        remember(videoList, viewState) { mutableStateListOf<Int>() }
+
+    LaunchedEffect(isSelectEnabled) {
+        if (!isSelectEnabled) {
+            delay(200)
+            selectedItemIds.clear()
+        }
+    }
+
+
     val selectedVideos = remember(selectedItemIds.size) {
         mutableStateOf(
             videoList.count { info ->
@@ -284,38 +303,63 @@ fun VideoListPage(
                         onBackPressed()
                     }
                 }, actions = {
-                    if (fullVideoList.isNotEmpty()) {
-                        IconToggleButton(
-                            modifier = Modifier,
-                            onCheckedChange = {
-                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                isSelectEnabled = it
-                            },
-                            checked = isSelectEnabled
-                        ) {
-                            Icon(
-                                Icons.Outlined.Checklist,
-                                contentDescription = stringResource(R.string.multiselect_mode)
-                            )
-                        }
-                        IconToggleButton(
-                            modifier = Modifier,
-                            onCheckedChange = {
-                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                videoListViewModel.toggleSearch(it)
-                                if (it) {
-                                    scope.launch {
-                                        delay(50)
-                                        lazyGridState.animateScrollToItem(0)
+                    Row {
+                        if (fullVideoList.isNotEmpty()) {
+                            IconToggleButton(
+                                modifier = Modifier,
+                                onCheckedChange = {
+                                    view.slightHapticFeedback()
+                                    videoListViewModel.toggleSearch(it)
+                                    if (it) {
+                                        scope.launch {
+                                            delay(50)
+                                            lazyGridState.animateScrollToItem(0)
+                                        }
                                     }
+                                },
+                                checked = viewState.isSearching
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Search,
+                                    contentDescription = stringResource(R.string.search)
+                                )
+                            }
+                            var expanded by remember { mutableStateOf(false) }
+
+                            Box(
+                                modifier = Modifier.wrapContentSize(Alignment.TopEnd)
+                            ) {
+                                IconButton(onClick = { expanded = true }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.MoreVert,
+                                        contentDescription = stringResource(
+                                            id = R.string.show_more_actions
+                                        )
+                                    )
                                 }
-                            },
-                            checked = viewState.isSearching
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Search,
-                                contentDescription = stringResource(R.string.search)
-                            )
+                                DropdownMenu(
+                                    expanded = expanded,
+                                    onDismissRequest = { expanded = false }) {
+                                    DropdownMenuItem(
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Outlined.DriveFileMove,
+                                                contentDescription = null
+                                            )
+                                        },
+                                        text = { Text(text = stringResource(id = R.string.export_backup)) },
+                                        onClick = { showExportDialog = true })
+                                    DropdownMenuItem(
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Outlined.AssignmentReturn,
+                                                contentDescription = null
+                                            )
+                                        },
+                                        text = { Text(text = stringResource(id = R.string.import_backup)) },
+                                        onClick = { showImportDialog = true })
+                                }
+                            }
                         }
                     }
                 }, scrollBehavior = scrollBehavior
@@ -448,7 +492,9 @@ fun VideoListPage(
                                 isSelectEnabled = { isSelectEnabled },
                                 isSelected = { selectedItemIds.contains(id) },
                                 onSelect = {
-                                    if (selectedItemIds.contains(id)) selectedItemIds.remove(id)
+                                    if (selectedItemIds.contains(id)) selectedItemIds.remove(
+                                        id
+                                    )
                                     else selectedItemIds.add(id)
                                 },
                                 onClick = {
@@ -456,6 +502,11 @@ fun VideoListPage(
                                         ToastUtil.makeToastSuspend(App.context.getString(R.string.file_unavailable))
                                     }
                                 }, onLongClick = {
+                                    isSelectEnabled = true
+                                    selectedItemIds.add(id)
+                                },
+                                onShowContextMenu = {
+                                    view.slightHapticFeedback()
                                     currentVideoInfoId = info.id
                                     scope.launch {
                                         showBottomSheet = true

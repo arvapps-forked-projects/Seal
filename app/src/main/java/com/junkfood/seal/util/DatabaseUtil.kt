@@ -11,12 +11,9 @@ import com.junkfood.seal.database.DownloadedVideoInfo
 import com.junkfood.seal.database.OptionShortcut
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 
 object DatabaseUtil {
-    val format = Json { prettyPrint = true }
     private const val DATABASE_NAME = "app_database"
     private val db = Room.databaseBuilder(
         context, AppDatabase::class.java, DATABASE_NAME
@@ -36,7 +33,9 @@ object DatabaseUtil {
         }
     }
 
-    fun getMediaInfo() = dao.getAllMedia()
+    fun getDownloadHistoryFlow() = dao.getDownloadHistoryFlow()
+
+    private suspend fun getDownloadHistory() = dao.getDownloadHistory()
 
     fun getTemplateFlow() = dao.getTemplateFlow()
 
@@ -54,7 +53,7 @@ object DatabaseUtil {
 
     suspend fun updateCookieProfile(profile: CookieProfile) = dao.updateCookieProfile(profile)
     suspend fun getTemplateList() = dao.getTemplateList()
-    private suspend fun getShortcutList() = dao.getShortcutList()
+    suspend fun getShortcutList() = dao.getShortcutList()
     suspend fun deleteInfoListByIdList(idList: List<Int>, deleteFile: Boolean = false) =
         dao.deleteInfoListByIdList(idList, deleteFile)
 
@@ -68,46 +67,55 @@ object DatabaseUtil {
         dao.updateTemplate(commandTemplate)
     }
 
-    suspend fun deleteTemplateById(id: Int) = dao.deleteTemplateById(id)
-
-    suspend fun deleteTemplates(templates: List<CommandTemplate>) = dao.deleteTemplates(templates)
-
-    suspend fun exportTemplatesToJson() =
-        exportTemplatesToJson(templates = getTemplateList(), shortcuts = getShortcutList())
-
-    fun exportTemplatesToJson(
-        templates: List<CommandTemplate>,
-        shortcuts: List<OptionShortcut>
-    ): String {
-        return format.encodeToString(
-            Backup(
-                templates = templates, shortcuts = shortcuts
-            )
-        )
-    }
-
     suspend fun importTemplatesFromJson(json: String): Int {
         val templateList = getTemplateList()
         val shortcutList = getShortcutList()
         var cnt = 0
         try {
-            format.decodeFromString<Backup>(json).run {
-                templates.filterNot {
-                    templateList.contains(it)
-                }.run {
-                    dao.importTemplates(this.map { it.copy(id = 0) })
-                    cnt += size
+            BackupUtil.format.decodeFromString<Backup>(json).run {
+                if (templates != null) {
+                    dao.importTemplates(
+                        templateList.filterNot {
+                            templateList.contains(it)
+                        }.map { it.copy(id = 0) }.also { cnt += it.size }
+                    )
                 }
-                dao.insertAllShortcuts(shortcuts.filterNot {
-                    shortcutList.contains(it)
-                }.map { it.copy(id = 0) }.apply { cnt += size })
+                if (shortcuts != null) {
+                    dao.insertAllShortcuts(
+                        shortcuts.filterNot {
+                            shortcutList.contains(it)
+                        }.map { it.copy(id = 0) }.apply { cnt += size }
+                    )
+                }
             }
-
         } catch (e: Exception) {
             e.printStackTrace()
         }
         return cnt
     }
+
+    suspend fun importDownloadHistoryFromJson(json: String): Int {
+        val itemList = getDownloadHistory()
+        var cnt = 0
+        BackupUtil.format.runCatching {
+            decodeFromString<Backup>(json).run {
+                if (!downloadHistory.isNullOrEmpty()) {
+                    dao.insertAll(
+                        downloadHistory
+                            .filterNot { itemList.contains(it) }
+                            .map { it.copy(id = 0) }
+                            .also { cnt += it.size }
+                    )
+                }
+            }
+        }
+        return cnt
+    }
+
+    suspend fun deleteTemplateById(id: Int) = dao.deleteTemplateById(id)
+
+    suspend fun deleteTemplates(templates: List<CommandTemplate>) = dao.deleteTemplates(templates)
+
 
     private const val TAG = "DatabaseUtil"
 }
