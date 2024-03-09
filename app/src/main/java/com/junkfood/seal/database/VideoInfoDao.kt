@@ -6,6 +6,10 @@ import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.junkfood.seal.database.objects.CommandTemplate
+import com.junkfood.seal.database.objects.CookieProfile
+import com.junkfood.seal.database.objects.DownloadedVideoInfo
+import com.junkfood.seal.database.objects.OptionShortcut
 import com.junkfood.seal.util.FileUtil
 import kotlinx.coroutines.flow.Flow
 
@@ -48,14 +52,9 @@ interface VideoInfoDao {
     @Delete
     suspend fun deleteInfo(vararg info: DownloadedVideoInfo)
 
+    @Delete
     @Transaction
-    suspend fun deleteInfoListByIdList(idList: List<Int>, deleteFile: Boolean = false) {
-        idList.forEach { id ->
-            val info = getInfoById(id)
-            if (deleteFile) FileUtil.deleteFile(info.videoPath)
-            deleteInfo(info)
-        }
-    }
+    suspend fun deleteInfoList(idList: List<DownloadedVideoInfo>)
 
     @Query("SELECT * FROM CommandTemplate")
     fun getTemplateFlow(): Flow<List<CommandTemplate>>

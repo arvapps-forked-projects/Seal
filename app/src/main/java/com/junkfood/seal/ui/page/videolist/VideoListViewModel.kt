@@ -1,30 +1,33 @@
 package com.junkfood.seal.ui.page.videolist
 
-import androidx.compose.material.ExperimentalMaterialApi
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import android.content.Context
+import android.net.Uri
+import androidx.compose.material3.SnackbarHostState
 import androidx.lifecycle.ViewModel
-import com.junkfood.seal.database.DownloadedVideoInfo
-import com.junkfood.seal.util.BackupUtil.toJson
-import com.junkfood.seal.util.BackupUtil.toURLs
+import androidx.lifecycle.viewModelScope
+import com.junkfood.seal.R
+import com.junkfood.seal.database.backup.BackupUtil
+import com.junkfood.seal.database.backup.BackupUtil.decodeToBackup
+import com.junkfood.seal.database.objects.DownloadedVideoInfo
 import com.junkfood.seal.util.DatabaseUtil
-import com.junkfood.seal.util.FileUtil
+import com.junkfood.seal.util.FileUtil.getFileSize
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 private const val TAG = "VideoListViewModel"
 
-@OptIn(ExperimentalMaterialApi::class)
 @HiltViewModel
 class VideoListViewModel @Inject constructor() : ViewModel() {
-
 
     private val mutableStateFlow = MutableStateFlow(VideoListViewState())
     val stateFlow = mutableStateFlow.asStateFlow()
@@ -40,10 +43,13 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         else list.filter {
             state.searchText.let { text ->
                 with(it) {
-                    videoTitle.contains(text, ignoreCase = true)
-                            || videoAuthor.contains(text, ignoreCase = true)
-                            || extractor.contains(text, ignoreCase = true)
-                            || videoPath.contains(text, ignoreCase = true)
+                    videoTitle.contains(text, ignoreCase = true) || videoAuthor.contains(
+                        text,
+                        ignoreCase = true
+                    ) || extractor.contains(text, ignoreCase = true) || videoPath.contains(
+                        text,
+                        ignoreCase = true
+                    )
                 }
             }
         }
@@ -54,6 +60,12 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
             infoList.forEach {
                 this.add(it.extractor)
             }
+        }
+    }
+
+    val fileSizeMapFlow = videoListFlow.flowOn(Dispatchers.IO).map { list ->
+        list.associate {
+            it.id to it.videoPath.getFileSize()
         }
     }
 
@@ -85,26 +97,57 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         mutableStateFlow.update { it.copy(searchText = text) }
     }
 
-    fun List<DownloadedVideoInfo>.backupToString(
-        type: BackupType,
-    ): String {
-        return if (type == BackupType.Full) toJson() else toURLs()
+    fun deleteDownloadHistory(infoList: List<DownloadedVideoInfo>, deleteFile: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            DatabaseUtil.deleteInfoList(infoList = infoList, deleteFile = deleteFile)
+        }
     }
 
-    @Composable
-    fun String.backupTo(destination: BackupDestination): Result<Unit> {
-        val clipboardManager = LocalClipboardManager.current
-        return when (destination) {
-            BackupDestination.File -> {
-                FileUtil.createTextFile(
-                    fileName = FileUtil.getDownloadHistoryExportFilename(),
-                    fileContent = this
-                )
+    fun importBackupFromUri(
+        context: Context, uri: Uri, onComplete: suspend (Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var res = 0
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                input.bufferedReader(Charsets.UTF_8).readText().let {
+                    res = importBackupFromText(it)
+                }
             }
+            withContext(Dispatchers.Main) {
+                onComplete(res)
+            }
+        }
+    }
 
-            BackupDestination.Clipboard -> {
-                runCatching { clipboardManager.setText(AnnotatedString(this)) }
+    fun importBackupFromText(
+        string: String, onComplete: suspend (Int) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val res = importBackupFromText(string)
+            withContext(Dispatchers.Main) {
+                onComplete(res)
             }
+        }
+    }
+
+    private suspend fun importBackupFromText(string: String): Int {
+        string.decodeToBackup().onSuccess {
+            return DatabaseUtil.importBackup(
+                backup = it, types = setOf(BackupUtil.BackupType.DownloadHistory)
+            )
+        }
+        return 0
+    }
+
+    fun showImportedSnackbar(hostState: SnackbarHostState, context: Context, importedCount: Int) {
+        viewModelScope.launch(Dispatchers.Main) {
+            hostState.showSnackbar(
+                message = context.getString(R.string.download_history_imported).format(
+                    context.resources.getQuantityString(
+                        R.plurals.item_count, importedCount
+                    ).format(importedCount)
+                )
+            )
         }
     }
 
@@ -115,13 +158,5 @@ class VideoListViewModel @Inject constructor() : ViewModel() {
         val isSearching: Boolean = false,
         val searchText: String = "",
     )
-
-    enum class BackupType {
-        Full, URL
-    }
-
-    enum class BackupDestination {
-        File, Clipboard
-    }
 
 }
