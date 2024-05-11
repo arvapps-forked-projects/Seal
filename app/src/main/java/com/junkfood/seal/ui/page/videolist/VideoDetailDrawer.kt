@@ -33,8 +33,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +44,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.junkfood.seal.R
 import com.junkfood.seal.database.objects.DownloadedVideoInfo
+import com.junkfood.seal.ui.common.HapticFeedback.slightHapticFeedback
 import com.junkfood.seal.ui.component.FilledTonalButtonWithIcon
 import com.junkfood.seal.ui.component.LongTapTextButton
 import com.junkfood.seal.ui.component.OutlinedButtonWithIcon
@@ -50,7 +53,6 @@ import com.junkfood.seal.ui.theme.SealTheme
 import com.junkfood.seal.util.FileUtil
 import com.junkfood.seal.util.ToastUtil
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoDetailDrawer(
     sheetState: ModalBottomSheetState,
@@ -60,6 +62,7 @@ fun VideoDetailDrawer(
     onDelete: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
+    val view = LocalView.current
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
     BackHandler(sheetState.targetValue == ModalBottomSheetValue.Expanded) {
@@ -90,6 +93,7 @@ fun VideoDetailDrawer(
             onReDownload = onReDownload,
             onDismissRequest = onDismissRequest,
             onDelete = {
+                view.slightHapticFeedback()
                 onDismissRequest()
                 onDelete()
             }, onOpenLink = {
@@ -97,6 +101,7 @@ fun VideoDetailDrawer(
                 onDismissRequest()
                 uriHandler.openUri(videoUrl)
             }, onShareFile = {
+                view.slightHapticFeedback()
                 FileUtil.createIntentForSharingFile(videoPath)?.runCatching {
                     context.startActivity(
                         Intent.createChooser(this, shareTitle)
@@ -112,7 +117,7 @@ fun VideoDetailDrawer(
 private fun DrawerPreview() {
     SealTheme {
         VideoDetailDrawerImpl(
-            sheetState = ModalBottomSheetState(ModalBottomSheetValue.Expanded),
+            sheetState = ModalBottomSheetState(ModalBottomSheetValue.Expanded, density = LocalDensity.current),
             onReDownload = {}
         )
     }
@@ -122,7 +127,7 @@ private fun DrawerPreview() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoDetailDrawerImpl(
-    sheetState: ModalBottomSheetState = ModalBottomSheetState(ModalBottomSheetValue.Hidden),
+    sheetState: ModalBottomSheetState = ModalBottomSheetState(ModalBottomSheetValue.Hidden, density = LocalDensity.current),
     title: String = stringResource(id = R.string.video_title_sample_text),
     author: String = stringResource(id = R.string.video_creator_sample_text),
     url: String = "https://www.example.com",
@@ -135,7 +140,7 @@ fun VideoDetailDrawerImpl(
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    SealModalBottomSheetM2(drawerState = sheetState,
+    SealModalBottomSheetM2(sheetState = sheetState,
         horizontalPadding = PaddingValues(horizontal = 20.dp),
         sheetContent = {
             Column(

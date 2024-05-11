@@ -33,9 +33,8 @@ const val CUSTOM_COMMAND = "custom_command"
 const val CONCURRENT = "concurrent_fragments"
 const val EXTRACT_AUDIO = "extract_audio"
 const val THUMBNAIL = "create_thumbnail"
-const val YT_DLP = "yt-dlp_init"
-const val YT_DLP_NIGHTLY = "yt-dlp_nightly"
-const val YT_DLP_UPDATE = "yt-dlp_auto_update"
+const val YT_DLP_VERSION = "yt-dlp_init"
+const val YT_DLP_AUTO_UPDATE = "yt-dlp_update"
 const val DEBUG = "debug"
 const val CONFIGURE = "configure"
 const val DARK_THEME_VALUE = "dark_theme_value"
@@ -102,10 +101,28 @@ const val EMBED_METADATA = "embed_metadata"
 const val RESTRICT_FILENAMES = "restrict_filenames"
 const val AV1_HARDWARE_ACCELERATED = "av1_hardware_accelerated"
 const val FORCE_IPV4 = "force_ipv4"
+const val MERGE_OUTPUT_MKV = "merge_to_mkv"
 
 const val MERGE_MULTI_AUDIO_STREAM = "multi_audio_stream"
 
 const val DOWNLOAD_TYPE_INITIALIZATION = "download_type_init"
+
+const val YT_DLP_UPDATE_CHANNEL = "yt-dlp_update_channel"
+const val YT_DLP_UPDATE_TIME = "yt-dlp_last_update"
+const val YT_DLP_UPDATE_INTERVAL = "yt-dlp_update_interval"
+
+private const val INTERVAL_DAY = 86_400_000L
+private const val INTERVAL_WEEK = 86_400_000L * 7
+private const val INTERVAL_MONTH = 86_400_000L * 30
+
+const val DEFAULT_INTERVAL = INTERVAL_WEEK  // every week
+
+val UpdateIntervalList =
+    mapOf(
+        INTERVAL_DAY to R.string.every_day,
+        INTERVAL_WEEK to R.string.every_week,
+        INTERVAL_MONTH to R.string.every_month
+    )
 
 const val NOT_SPECIFIED = 0
 const val DEFAULT = NOT_SPECIFIED
@@ -120,9 +137,11 @@ const val CONVERT_LRC = 2
 const val CONVERT_SRT = 3
 const val CONVERT_VTT = 4
 
-
 const val STABLE = 0
 const val PRE_RELEASE = 1
+
+const val YT_DLP_STABLE = 0
+const val YT_DLP_NIGHTLY = 1
 
 const val OPUS = 1
 const val M4A = 2
@@ -170,7 +189,7 @@ private val BooleanPreferenceDefaults = mapOf(
     FORMAT_SELECTION to true,
     CONFIGURE to true,
     CELLULAR_DOWNLOAD to false,
-    YT_DLP_UPDATE to true,
+    YT_DLP_AUTO_UPDATE to true,
     NOTIFICATION to true,
     EMBED_METADATA to true,
 )
@@ -189,6 +208,11 @@ private val IntPreferenceDefaults = mapOf(
     SHOW_SPONSOR_MSG to 0,
     CONVERT_SUBTITLE to NOT_SPECIFIED,
     DOWNLOAD_TYPE_INITIALIZATION to USE_PREVIOUS_SELECTION,
+    YT_DLP_UPDATE_CHANNEL to YT_DLP_NIGHTLY
+)
+
+private val LongPreferenceDefaults = mapOf(
+    YT_DLP_UPDATE_INTERVAL to DEFAULT_INTERVAL
 )
 
 fun String.getStringDefault() = StringPreferenceDefaults.getOrElse(this) { "" }
@@ -205,9 +229,14 @@ object PreferenceUtil {
     fun String.getBoolean(default: Boolean = BooleanPreferenceDefaults.getOrElse(this) { false }): Boolean =
         kv.decodeBool(this, default)
 
+    fun String.getLong(default: Long = LongPreferenceDefaults.getOrElse(this) { 0L }) =
+        kv.decodeLong(this, default)
+
     fun String.updateString(newString: String) = kv.encode(this, newString)
 
     fun String.updateInt(newInt: Int) = kv.encode(this, newInt)
+
+    fun String.updateLong(newLong: Long) = kv.encode(this, newLong)
 
     fun String.updateBoolean(newValue: Boolean) = kv.encode(this, newValue)
     fun updateValue(key: String, b: Boolean) = key.updateBoolean(b)
@@ -481,5 +510,17 @@ object PreferenceStrings {
             FORMAT_COMPATIBILITY -> stringResource(id = R.string.legacy)
             else -> stringResource(id = R.string.quality)
         }
+    }
+
+    @Composable
+    fun getUpdateIntervalText(interval: Long): String {
+        return stringResource(
+            id = when (interval) {
+                INTERVAL_DAY -> R.string.every_day
+                INTERVAL_WEEK -> R.string.every_week
+                INTERVAL_MONTH -> R.string.every_month
+                else -> R.string.disabled
+            }
+        )
     }
 }

@@ -137,43 +137,50 @@ object DownloadUtil {
 
     @CheckResult
     fun fetchVideoInfoFromUrl(
-        url: String, playlistItem: Int = 0, preferences: DownloadPreferences = DownloadPreferences()
-    ): Result<VideoInfo> = YoutubeDLRequest(url).apply {
-        preferences.run {
-            addOption("-o", BASENAME)
-            if (restrictFilenames) {
-                addOption("--restrict-filenames")
-            }
-            if (extractAudio) {
-                addOption("-x")
-            }
-            applyFormatSorter(preferences, toFormatSorter())
-            if (cookies) {
-                enableCookies(userAgentString)
-            }
-            if (proxy) {
-                enableProxy(proxyUrl)
-            }
-            if (forceIpv4) {
-                addOption("-4")
-            }
-            /*            if (debug) {
-                            addOption("-v")
-                        }*/
-            if (autoSubtitle) {
-                addOption("--write-auto-subs")
-                if (!autoTranslatedSubtitles) {
-                    addOption("--extractor-args", "youtube:skip=translated_subs")
+        url: String, playlistItem: Int = 0,
+        preferences: DownloadPreferences = DownloadPreferences()
+    ): Result<VideoInfo> {
+        with(preferences) {
+            val request = YoutubeDLRequest(url).apply {
+                addOption("-o", BASENAME)
+                if (restrictFilenames) {
+                    addOption("--restrict-filenames")
                 }
+                if (extractAudio) {
+                    addOption("-x")
+                }
+                applyFormatSorter(this@with, toFormatSorter())
+                if (cookies) {
+                    enableCookies(userAgentString)
+                }
+                if (proxy) {
+                    enableProxy(proxyUrl)
+                }
+                if (forceIpv4) {
+                    addOption("-4")
+                }
+                /*            if (debug) {
+                                addOption("-v")
+                            }*/
+                if (autoSubtitle) {
+                    addOption("--write-auto-subs")
+                    if (!autoTranslatedSubtitles) {
+                        addOption("--extractor-args", "youtube:skip=translated_subs")
+                    }
+                }
+                if (playlistItem != 0) {
+                    addOption("--playlist-items", playlistItem)
+                    addOption("--dump-json")
+                } else {
+                    addOption("--dump-single-json")
+                }
+                addOption("-R", "1")
+                addOption("--no-playlist")
+                addOption("--socket-timeout", "5")
             }
+            return getVideoInfo(request)
         }
-        addOption("--dump-json")
-        addOption("-R", "1")
-        addOption("--no-playlist")
-        if (playlistItem != 0) addOption("--playlist-items", playlistItem)
-        else addOption("--playlist-items", "1")
-        addOption("--socket-timeout", "5")
-    }.run { getVideoInfo(this) }
+    }
 
     data class DownloadPreferences(
         val extractAudio: Boolean = PreferenceUtil.getValue(EXTRACT_AUDIO),
@@ -226,7 +233,8 @@ object DownloadUtil {
         val restrictFilenames: Boolean = RESTRICT_FILENAMES.getBoolean(),
         val supportAv1HardwareDecoding: Boolean = checkIfAv1HardwareAccelerated(),
         val forceIpv4: Boolean = FORCE_IPV4.getBoolean(),
-        val mergeAudioStream: Boolean = false
+        val mergeAudioStream: Boolean = false,
+        val mergeToMkv: Boolean = (downloadSubtitle && embedSubtitle) || MERGE_OUTPUT_MKV.getBoolean()
     )
 
     private fun YoutubeDLRequest.enableCookies(userAgentString: String): YoutubeDLRequest =
@@ -244,13 +252,13 @@ object DownloadUtil {
 
 
     @CheckResult
-    fun getCookiesContentFromDatabase(): Result<String> = runCatching {
+    fun getCookieListFromDatabase(): Result<List<Cookie>> = runCatching {
         CookieManager.getInstance().run {
             if (!hasCookies()) throw Exception("There is no cookies in the database!")
             flush()
         }
         SQLiteDatabase.openDatabase(
-            "/data/data/com.junkfood.seal/app_webview/Default/Cookies", null, OPEN_READONLY
+            "/data/data/${context.packageName}/app_webview/Default/Cookies", null, OPEN_READONLY
         ).run {
             val projection = arrayOf(
                 CookieScheme.HOST,
@@ -287,13 +295,18 @@ object DownloadUtil {
                 close()
             }
             close()
-            Log.d(TAG, "Loaded ${cookieList.size} cookies from database!")
-            cookieList.fold(StringBuilder(COOKIE_HEADER)) { acc, cookie ->
-                acc.append(cookie.toNetscapeCookieString()).append("\n")
-            }.toString()
+            cookieList
         }
     }
 
+    fun List<Cookie>.toCookiesFileContent(): String =
+        this.fold(StringBuilder(COOKIE_HEADER)) { acc, cookie ->
+            acc.append(cookie.toNetscapeCookieString()).append("\n")
+        }.toString()
+
+    fun getCookiesContentFromDatabase(): Result<String> = getCookieListFromDatabase().mapCatching {
+        it.toCookiesFileContent()
+    }
 
     private fun YoutubeDLRequest.enableAria2c(): YoutubeDLRequest =
         this.addOption("--downloader", "libaria2c.so")
@@ -322,7 +335,6 @@ object DownloadUtil {
                 }
                 subtitleLanguage.takeIf { it.isNotEmpty() }?.let { addOption("--sub-langs", it) }
                 if (embedSubtitle) {
-                    addOption("--remux-video", "mkv")
                     addOption("--embed-subs")
                     if (keepSubtitle) {
                         addOption("--write-subs")
@@ -337,6 +349,10 @@ object DownloadUtil {
                     CONVERT_LRC -> addOption("--convert-subs", "lrc")
                     else -> {}
                 }
+            }
+            if (mergeToMkv) {
+                addOption("--remux-video", "mkv")
+                addOption("--merge-output-format", "mkv")
             }
             if (embedThumbnail) {
                 addOption("--embed-thumbnail")
@@ -699,7 +715,7 @@ object DownloadUtil {
         downloadPreferences.run {
             val taskId = Downloader.makeKey(url = url, templateName = template.name)
             val notificationId = taskId.toNotificationId()
-            val urlList = url.split(Regex("[\n ]"))
+            val urlList = url.split(Regex("[\n ]")).filter { it.isNotBlank() }
 
             ToastUtil.makeToastSuspend(context.getString(R.string.start_execute))
             val request = YoutubeDLRequest(urlList).apply {

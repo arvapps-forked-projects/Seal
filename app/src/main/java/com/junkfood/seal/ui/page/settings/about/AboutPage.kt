@@ -58,7 +58,7 @@ import com.junkfood.seal.util.ToastUtil
 private const val releaseURL = "https://github.com/JunkFood02/Seal/releases"
 private const val repoUrl = "https://github.com/JunkFood02/Seal"
 const val weblate = "https://hosted.weblate.org/engage/seal/"
-private const val githubIssueUrl = "https://github.com/JunkFood02/Seal/issues/new/choose"
+private const val githubIssueUrl = "https://github.com/JunkFood02/Seal/issues"
 private const val telegramChannelUrl = "https://t.me/seal_app"
 private const val matrixSpaceUrl = "https://matrix.to/#/#seal-space:matrix.org"
 private const val githubSponsor = "https://github.com/sponsors/JunkFood02"
@@ -67,7 +67,7 @@ private const val TAG = "AboutPage"
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutPage(
-    onBackPressed: () -> Unit,
+    onNavigateBack: () -> Unit,
     onNavigateToCreditsPage: () -> Unit,
     onNavigateToUpdatePage: () -> Unit,
     onNavigateToDonatePage: () -> Unit
@@ -106,7 +106,7 @@ fun AboutPage(
             )
         }, navigationIcon = {
             BackButton {
-                onBackPressed()
+                onNavigateBack()
             }
         }, scrollBehavior = scrollBehavior
         )

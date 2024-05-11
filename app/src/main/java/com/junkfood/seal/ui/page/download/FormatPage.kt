@@ -84,6 +84,7 @@ import com.junkfood.seal.ui.component.HorizontalDivider
 import com.junkfood.seal.ui.component.PreferenceInfo
 import com.junkfood.seal.ui.component.SealDialog
 import com.junkfood.seal.ui.component.SealSearchBar
+import com.junkfood.seal.ui.component.SuggestedFormatItem
 import com.junkfood.seal.ui.component.TextButtonWithIcon
 import com.junkfood.seal.ui.component.VideoFilterChip
 import com.junkfood.seal.ui.page.settings.general.DialogCheckBoxItem
@@ -109,7 +110,7 @@ import kotlin.math.roundToInt
 private const val TAG = "FormatPage"
 
 @Composable
-fun FormatPage(downloadViewModel: DownloadViewModel, onBackPressed: () -> Unit = {}) {
+fun FormatPage(downloadViewModel: DownloadViewModel, onNavigateBack: () -> Unit = {}) {
     val videoInfo by downloadViewModel.videoInfoFlow.collectAsStateWithLifecycle()
     if (videoInfo.formats.isNullOrEmpty()) return
     val audioOnly = EXTRACT_AUDIO.getBoolean()
@@ -129,7 +130,7 @@ fun FormatPage(downloadViewModel: DownloadViewModel, onBackPressed: () -> Unit =
 
     FormatPageImpl(
         videoInfo = videoInfo,
-        onBackPressed = onBackPressed,
+        onNavigateBack = onNavigateBack,
         audioOnly = audioOnly,
         mergeAudioStream = !audioOnly && mergeAudioStream,
         selectedSubtitleCodes = initialSelectedSubtitles,
@@ -152,7 +153,7 @@ fun FormatPage(downloadViewModel: DownloadViewModel, onBackPressed: () -> Unit =
         if (diffSubtitleLanguages.isNotEmpty()) {
             showUpdateSubtitleDialog = true
         } else {
-            onBackPressed()
+            onNavigateBack()
         }
     }
 
@@ -162,7 +163,7 @@ fun FormatPage(downloadViewModel: DownloadViewModel, onBackPressed: () -> Unit =
             languages = diffSubtitleLanguages,
             onDismissRequest = {
                 showUpdateSubtitleDialog = false
-                onBackPressed()
+                onNavigateBack()
             },
             onConfirm = {
                 SUBTITLE_LANGUAGE.updateString(
@@ -170,7 +171,7 @@ fun FormatPage(downloadViewModel: DownloadViewModel, onBackPressed: () -> Unit =
                         separator = ",",
                     ) { it })
                 showUpdateSubtitleDialog = false
-                onBackPressed()
+                onNavigateBack()
             }
         )
     }
@@ -232,7 +233,16 @@ private fun FormatPagePreview() {
                     add(Format(formatId = "$it", vcodec = "avc1", acodec = "none"))
                 }
                 repeat(7) {
-                    add(Format(formatId = "$it", acodec = "aac", vcodec = "none"))
+                    add(
+                        Format(
+                            formatId = "$it",
+                            acodec = "aac",
+                            vcodec = "none",
+                            format = "251 - audio only (medium)",
+                            fileSizeApprox = 2000000.0,
+                            tbr = 128.0
+                        )
+                    )
                 }
             },
             subtitles = subMap, automaticCaptions = captionsMap,
@@ -256,7 +266,7 @@ private fun FormatPagePreview() {
                     )
                 )
             },
-            duration = 100000.0
+            duration = 180.0
         )
     SealTheme {
         FormatPageImpl(
@@ -276,7 +286,7 @@ fun FormatPageImpl(
     mergeAudioStream: Boolean = false,
     isClippingAvailable: Boolean = false,
     selectedSubtitleCodes: Set<String>,
-    onBackPressed: () -> Unit = {},
+    onNavigateBack: () -> Unit = {},
     onDownloadPressed: (List<Format>, List<VideoClip>, Boolean, String, List<String>) -> Unit = { _, _, _, _, _ -> }
 ) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -289,12 +299,18 @@ fun FormatPageImpl(
     val videoAudioFormats =
         videoInfo.formats.filter { it.acodec != "none" && it.vcodec != "none" }.reversed()
 
+    val duration = videoInfo.duration ?: 0.0
+
     var videoOnlyItemLimit by remember { mutableIntStateOf(6) }
     var audioOnlyItemLimit by remember { mutableIntStateOf(6) }
     var videoAudioItemLimit by remember { mutableIntStateOf(6) }
 
+    val isSuggestedFormatAvailable =
+        !videoInfo.requestedFormats.isNullOrEmpty() || !videoInfo.requestedDownloads.isNullOrEmpty()
 
-    var isSuggestedFormatSelected by remember { mutableStateOf(true) }
+    var isSuggestedFormatSelected by remember { mutableStateOf(isSuggestedFormatAvailable) }
+
+
     var selectedVideoAudioFormat by remember { mutableIntStateOf(NOT_SELECTED) }
     var selectedVideoOnlyFormat by remember { mutableIntStateOf(NOT_SELECTED) }
     val selectedAudioOnlyFormats = remember { mutableStateListOf<Int>() }
@@ -316,12 +332,12 @@ fun FormatPageImpl(
     var isSplittingVideo by remember { mutableStateOf(false) }
     val isSplitByChapterAvailable = !videoInfo.chapters.isNullOrEmpty()
 
-    val videoDuration = 0f..(videoInfo.duration?.toFloat() ?: 0f)
+    val videoDurationRange = 0f..(videoInfo.duration?.toFloat() ?: 0f)
     var showVideoClipDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showSubtitleSelectionDialog by remember { mutableStateOf(false) }
 
-    var videoClipDuration by remember { mutableStateOf(videoDuration) }
+    var videoClipDuration by remember { mutableStateOf(videoDurationRange) }
     var videoTitle by remember { mutableStateOf("") }
 
     val suggestedSubtitleMap: Map<String, List<SubtitleFormat>> =
@@ -333,7 +349,7 @@ fun FormatPageImpl(
 
     LaunchedEffect(isClippingVideo) {
         delay(200)
-        videoClipDuration = videoDuration
+        videoClipDuration = videoDurationRange
     }
 
     val formatList: List<Format> by remember {
@@ -363,7 +379,7 @@ fun FormatPageImpl(
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp)
                 )
             }, scrollBehavior = scrollBehavior, navigationIcon = {
-                IconButton(onClick = { onBackPressed() }) {
+                IconButton(onClick = { onNavigateBack() }) {
                     Icon(Icons.Outlined.Close, stringResource(R.string.close))
                 }
             }, actions = {
@@ -395,7 +411,7 @@ fun FormatPageImpl(
                         title = videoTitle.ifEmpty { title },
                         author = uploader ?: channel ?: uploaderId.toString(),
                         thumbnailUrl = thumbnail.toHttpsUrl(),
-                        duration = (duration ?: .0).roundToInt(),
+                        duration = duration.roundToInt(),
                         isClippingVideo = isClippingVideo,
                         isSplittingVideo = isSplittingVideo,
                         isClippingAvailable = isClippingAvailable,
@@ -410,115 +426,118 @@ fun FormatPageImpl(
                         },
                     )
                 }
+            }
 
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    var shouldUpdateClipDuration by remember { mutableStateOf(false) }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                var shouldUpdateClipDuration by remember { mutableStateOf(false) }
 
-                    Column {
-                        AnimatedVisibility(visible = isClippingVideo) {
-                            Column {
-                                val state = remember(isClippingVideo, showVideoClipDialog) {
-                                    RangeSliderState(
-                                        activeRangeStart = videoClipDuration.start,
-                                        activeRangeEnd = videoClipDuration.endInclusive,
-                                        valueRange = videoDuration,
-                                        onValueChangeFinished = {
-                                            shouldUpdateClipDuration = true
-                                        }
-                                    )
-                                }
-                                DisposableEffect(shouldUpdateClipDuration) {
-                                    videoClipDuration = state.activeRangeStart..state.activeRangeEnd
-                                    onDispose {
-                                        shouldUpdateClipDuration = false
+                Column {
+                    AnimatedVisibility(visible = isClippingVideo) {
+                        Column {
+                            val state = remember(isClippingVideo, showVideoClipDialog) {
+                                RangeSliderState(
+                                    activeRangeStart = videoClipDuration.start,
+                                    activeRangeEnd = videoClipDuration.endInclusive,
+                                    valueRange = videoDurationRange,
+                                    onValueChangeFinished = {
+                                        shouldUpdateClipDuration = true
                                     }
-                                }
-
-                                VideoSelectionSlider(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    state = state,
-                                    onDiscard = { isClippingVideo = false },
-                                    onDurationClick = { showVideoClipDialog = true },
                                 )
-                                HorizontalDivider()
                             }
-                        }
-
-                        AnimatedVisibility(visible = isSplittingVideo) {
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = stringResource(
-                                            id = R.string.split_video_msg, chapters?.size ?: 0
-                                        ),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        modifier = Modifier.padding(horizontal = 12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    TextButtonWithIcon(
-                                        onClick = { isSplittingVideo = false },
-                                        icon = Icons.Outlined.Delete,
-                                        text = stringResource(id = R.string.discard),
-                                        contentColor = MaterialTheme.colorScheme.error
-                                    )
+                            DisposableEffect(shouldUpdateClipDuration) {
+                                videoClipDuration = state.activeRangeStart..state.activeRangeEnd
+                                onDispose {
+                                    shouldUpdateClipDuration = false
                                 }
-                                HorizontalDivider()
                             }
+
+                            VideoSelectionSlider(
+                                modifier = Modifier.fillMaxWidth(),
+                                state = state,
+                                onDiscard = { isClippingVideo = false },
+                                onDurationClick = { showVideoClipDialog = true },
+                            )
+                            HorizontalDivider()
                         }
                     }
 
-                }
-
-
-                if (suggestedSubtitleMap.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
+                    AnimatedVisibility(visible = isSplittingVideo) {
+                        Column {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically, modifier = Modifier
-                                    .padding(top = 12.dp)
-                                    .padding(horizontal = 12.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = stringResource(id = R.string.subtitle_language),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    modifier = Modifier.weight(1f)
+                                    text = stringResource(
+                                        id = R.string.split_video_msg, videoInfo.chapters?.size ?: 0
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
-
-                                ClickableTextAction(
-                                    visible = true,
-                                    text = stringResource(id = androidx.appcompat.R.string.abc_activity_chooser_view_see_all)
-                                ) {
-                                    showSubtitleSelectionDialog = true
-                                }
-
+                                Spacer(modifier = Modifier.weight(1f))
+                                TextButtonWithIcon(
+                                    onClick = { isSplittingVideo = false },
+                                    icon = Icons.Outlined.Delete,
+                                    text = stringResource(id = R.string.discard),
+                                    contentColor = MaterialTheme.colorScheme.error
+                                )
                             }
+                            HorizontalDivider()
+                        }
+                    }
+                }
 
-                            LazyRow(modifier = Modifier.padding()) {
-                                for ((code, formats) in suggestedSubtitleMap) {
-                                    item {
-                                        VideoFilterChip(
-                                            selected = selectedLanguageList.contains(code),
-                                            onClick = {
-                                                if (selectedLanguageList.contains(code)) {
-                                                    selectedLanguageList.remove(code)
-                                                } else {
-                                                    selectedLanguageList.add(code)
-                                                }
-                                            },
-                                            label = formats.first()
-                                                .run { name ?: protocol ?: code })
-                                    }
-                                }
+            }
+
+
+            if (suggestedSubtitleMap.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+                                .padding(top = 12.dp)
+                                .padding(horizontal = 12.dp)
+                        ) {
+                            Text(
+                                text = stringResource(id = R.string.subtitle_language),
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            ClickableTextAction(
+                                visible = true,
+                                text = stringResource(id = androidx.appcompat.R.string.abc_activity_chooser_view_see_all)
+                            ) {
+                                showSubtitleSelectionDialog = true
                             }
 
                         }
 
+                        LazyRow(modifier = Modifier.padding()) {
+                            for ((code, formats) in suggestedSubtitleMap) {
+                                item {
+                                    VideoFilterChip(
+                                        selected = selectedLanguageList.contains(code),
+                                        onClick = {
+                                            if (selectedLanguageList.contains(code)) {
+                                                selectedLanguageList.remove(code)
+                                            } else {
+                                                selectedLanguageList.add(code)
+                                            }
+                                        },
+                                        label = formats.first()
+                                            .run { name ?: protocol ?: code })
+                                }
+                            }
+                        }
+
                     }
+
                 }
+            }
+
+            if (isSuggestedFormatAvailable) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically, modifier = Modifier
@@ -540,21 +559,16 @@ fun FormatPageImpl(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        FormatItem(
+                        SuggestedFormatItem(
                             modifier = Modifier.weight(1f),
-                            formatDesc = format.toString(),
-                            resolution = resolution.toString(),
-                            acodec = acodec,
-                            vcodec = vcodec,
-                            ext = ext,
-                            bitRate = tbr?.toFloat() ?: 0f,
-                            fileSize = fileSize ?: fileSizeApprox ?: .0,
+                            videoInfo = videoInfo,
                             selected = isSuggestedFormatSelected,
                             onClick = onClick
                         )
                     }
                 }
             }
+
 
             if (audioOnlyFormats.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(
@@ -588,7 +602,9 @@ fun FormatPageImpl(
                     toIndex = min(audioOnlyItemLimit, audioOnlyFormats.size)
                 )
             ) { index, formatInfo ->
-                FormatItem(formatInfo = formatInfo,
+                FormatItem(
+                    formatInfo = formatInfo,
+                    duration = duration,
                     selected = selectedAudioOnlyFormats.contains(index),
                     containerColor = MaterialTheme.colorScheme.secondaryContainer,
                     outlineColor = MaterialTheme.colorScheme.secondary,
@@ -640,7 +656,9 @@ fun FormatPageImpl(
                         min(videoOnlyItemLimit, videoOnlyFormats.size)
                     )
                 ) { index, formatInfo ->
-                    FormatItem(formatInfo = formatInfo,
+                    FormatItem(
+                        formatInfo = formatInfo,
+                        duration = duration,
                         selected = selectedVideoOnlyFormat == index,
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         outlineColor = MaterialTheme.colorScheme.tertiary,
@@ -688,7 +706,9 @@ fun FormatPageImpl(
                         min(videoAudioItemLimit, videoAudioFormats.size)
                     )
                 ) { index, formatInfo ->
-                    FormatItem(formatInfo = formatInfo,
+                    FormatItem(
+                        formatInfo = formatInfo,
+                        duration = duration,
                         selected = selectedVideoAudioFormat == index,
                         onLongClick = { formatInfo.url.share() }) {
                         selectedVideoAudioFormat =
@@ -720,7 +740,7 @@ fun FormatPageImpl(
     }
     if (showVideoClipDialog) VideoClipDialog(onDismissRequest = { showVideoClipDialog = false },
         initialValue = videoClipDuration,
-        valueRange = videoDuration,
+        valueRange = videoDurationRange,
         onConfirm = { videoClipDuration = it })
 
     if (showRenameDialog) RenameDialog(initialValue = videoTitle.ifEmpty { videoInfo.title },
@@ -1001,7 +1021,7 @@ fun <T : Collection<String>> T.filterWithRegex(subtitleLanguageRegex: String): S
     val regexGroup = subtitleLanguageRegex.split(',')
     return filter { language ->
         regexGroup.any {
-            language.contains(Regex(it))
+            Regex(it).matchEntire(language) != null
         }
     }.toSet()
 }

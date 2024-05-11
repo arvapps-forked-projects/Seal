@@ -52,9 +52,9 @@ import com.junkfood.seal.ui.component.PlaylistItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlaylistSelectionPage(onBackPressed: () -> Unit = {}) {
+fun PlaylistSelectionPage(onNavigateBack: () -> Unit = {}) {
     val onDismissRequest = {
-        onBackPressed()
+        onNavigateBack()
     }
     val playlistInfo by Downloader.playlistResult.collectAsStateWithLifecycle()
     val selectedItems = rememberSaveable(saver = listSaver<MutableList<Int>, Int>(
@@ -94,7 +94,7 @@ fun PlaylistSelectionPage(onBackPressed: () -> Unit = {}) {
                 TextButton(
                     modifier = Modifier.padding(end = 8.dp), onClick = {
                         Downloader.downloadVideoInPlaylistByIndexList(
-                            url = playlistInfo.webpageUrl.toString(),
+                            url = playlistInfo.originalUrl ?: playlistInfo.webpageUrl.toString(),
                             indexList = selectedItems,
                             playlistItemList = playlistInfo.entries?.filterIndexed { index, _ ->
                                 selectedItems.contains(index)

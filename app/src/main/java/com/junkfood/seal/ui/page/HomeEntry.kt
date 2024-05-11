@@ -26,13 +26,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraphBuilder
-import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
+import com.junkfood.seal.Downloader
 import com.junkfood.seal.R
 import com.junkfood.seal.ui.common.LocalWindowWidthState
 import com.junkfood.seal.ui.common.Route
@@ -61,6 +62,7 @@ import com.junkfood.seal.ui.page.settings.directory.DownloadDirectoryPreferences
 import com.junkfood.seal.ui.page.settings.format.DownloadFormatPreferences
 import com.junkfood.seal.ui.page.settings.format.SubtitlePreference
 import com.junkfood.seal.ui.page.settings.general.GeneralDownloadPreferences
+import com.junkfood.seal.ui.page.settings.interaction.InteractionPreferencePage
 import com.junkfood.seal.ui.page.settings.network.CookieProfilePage
 import com.junkfood.seal.ui.page.settings.network.CookiesViewModel
 import com.junkfood.seal.ui.page.settings.network.NetworkPreferences
@@ -68,11 +70,15 @@ import com.junkfood.seal.ui.page.settings.network.WebViewPage
 import com.junkfood.seal.ui.page.videolist.VideoListPage
 import com.junkfood.seal.util.PreferenceUtil
 import com.junkfood.seal.util.PreferenceUtil.getBoolean
+import com.junkfood.seal.util.PreferenceUtil.getInt
+import com.junkfood.seal.util.PreferenceUtil.getLong
 import com.junkfood.seal.util.PreferenceUtil.getString
 import com.junkfood.seal.util.ToastUtil
 import com.junkfood.seal.util.UpdateUtil
-import com.junkfood.seal.util.YT_DLP
-import com.junkfood.seal.util.YT_DLP_UPDATE
+import com.junkfood.seal.util.YT_DLP_AUTO_UPDATE
+import com.junkfood.seal.util.YT_DLP_UPDATE_INTERVAL
+import com.junkfood.seal.util.YT_DLP_UPDATE_TIME
+import com.junkfood.seal.util.YT_DLP_VERSION
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -118,7 +124,7 @@ fun HomeEntry(
         }
     }
 
-    val onBackPressed: () -> Unit = {
+    val onNavigateBack: () -> Unit = {
         with(navController) {
             if (currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED) {
                 popBackStack()
@@ -168,10 +174,10 @@ fun HomeEntry(
                     downloadViewModel = downloadViewModel
                 )
             }
-            animatedComposable(Route.DOWNLOADS) { VideoListPage { onBackPressed() } }
+            animatedComposable(Route.DOWNLOADS) { VideoListPage { onNavigateBack() } }
             animatedComposableVariant(Route.TASK_LIST) {
                 TaskListPage(
-                    onBackPressed = onBackPressed,
+                    onNavigateBack = onNavigateBack,
                     onNavigateToDetail = { navController.navigate(Route.TASK_LOG id it) }
                 )
             }
@@ -180,18 +186,22 @@ fun HomeEntry(
                 arguments = listOf(navArgument(Route.TASK_HASHCODE) { type = NavType.IntType })
             ) {
                 TaskLogPage(
-                    onBackPressed = onBackPressed,
+                    onNavigateBack = onNavigateBack,
                     taskHashCode = it.arguments?.getInt(Route.TASK_HASHCODE) ?: -1
                 )
             }
 
-//            animatedComposable(Route.DOWNLOAD_QUEUE) { DownloadQueuePage { onBackPressed() } }
-            slideInVerticallyComposable(Route.PLAYLIST) { PlaylistSelectionPage { onBackPressed() } }
-            slideInVerticallyComposable(Route.FORMAT_SELECTION) { FormatPage(downloadViewModel) { onBackPressed() } }
+//            animatedComposable(Route.DOWNLOAD_QUEUE) { DownloadQueuePage { onNavigateBack() } }
+            slideInVerticallyComposable(Route.PLAYLIST) { PlaylistSelectionPage { onNavigateBack() } }
+            slideInVerticallyComposable(Route.FORMAT_SELECTION) { FormatPage(downloadViewModel) { onNavigateBack() } }
             settingsGraph(
-                navController = navController,
                 cookiesViewModel = cookiesViewModel,
-                onBackPressed = onBackPressed
+                onNavigateBack = onNavigateBack,
+                onNavigateTo = { route ->
+                    navController.navigate(route = route) {
+                        launchSingleTop = true
+                    }
+                }
             )
 
         }
@@ -199,21 +209,38 @@ fun HomeEntry(
         WelcomeDialog {
             navController.navigate(Route.SETTINGS)
         }
+
+        val downloaderState by Downloader.downloaderState.collectAsStateWithLifecycle()
+
         LaunchedEffect(Unit) {
-            if (!YT_DLP_UPDATE.getBoolean()
-                && YT_DLP.getString().isNotEmpty()
+            if (downloaderState !is Downloader.State.Idle) return@LaunchedEffect
+
+            if (!YT_DLP_AUTO_UPDATE.getBoolean() && YT_DLP_VERSION.getString()
+                    .isNotEmpty()
             ) return@LaunchedEffect
+
+            if (!PreferenceUtil.isNetworkAvailableForDownload()) {
+                return@LaunchedEffect
+            }
+
+            val lastUpdateTime = YT_DLP_UPDATE_TIME.getLong()
+            val currentTime = System.currentTimeMillis()
+
+            if (currentTime < lastUpdateTime + YT_DLP_UPDATE_INTERVAL.getLong()) {
+                return@LaunchedEffect
+            }
+
             runCatching {
+                Downloader.updateState(state = Downloader.State.Updating)
                 withContext(Dispatchers.IO) {
-                    val res = UpdateUtil.updateYtDlp()
-                    if (res == YoutubeDL.UpdateStatus.DONE) {
-                        ToastUtil.makeToastSuspend(context.getString(R.string.yt_dlp_up_to_date) + " (${YT_DLP.getString()})")
-                    }
+                    UpdateUtil.updateYtDlp()
                 }
             }.onFailure {
                 it.printStackTrace()
             }
+            Downloader.updateState(state = Downloader.State.Idle)
         }
+
         LaunchedEffect(Unit) {
             if (!PreferenceUtil.isNetworkAvailableForDownload() || !PreferenceUtil.isAutoUpdateEnabled()
             )
@@ -265,74 +292,80 @@ fun HomeEntry(
 }
 
 fun NavGraphBuilder.settingsGraph(
-    navController: NavHostController,
     cookiesViewModel: CookiesViewModel,
-    onBackPressed: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateTo: (route: String) -> Unit
 ) {
     navigation(startDestination = Route.SETTINGS_PAGE, route = Route.SETTINGS) {
         animatedComposable(Route.DOWNLOAD_DIRECTORY) {
-            DownloadDirectoryPreferences { onBackPressed() }
+            DownloadDirectoryPreferences(onNavigateBack)
         }
         animatedComposable(Route.SETTINGS_PAGE) {
             SettingsPage(
-                navController = navController,
-                onBackPressed = onBackPressed
+                onNavigateBack = onNavigateBack,
+                onNavigateTo = onNavigateTo
             )
         }
         animatedComposable(Route.GENERAL_DOWNLOAD_PREFERENCES) {
             GeneralDownloadPreferences(
-                onBackPressed = { onBackPressed() },
-            ) { navController.navigate(Route.TEMPLATE) }
+                onNavigateBack = { onNavigateBack() },
+            ) { onNavigateTo(Route.TEMPLATE) }
         }
         animatedComposable(Route.DOWNLOAD_FORMAT) {
-            DownloadFormatPreferences(onBackPressed = onBackPressed) {
-                navController.navigate(Route.SUBTITLE_PREFERENCES)
+            DownloadFormatPreferences(onNavigateBack = onNavigateBack) {
+                onNavigateTo(Route.SUBTITLE_PREFERENCES)
             }
         }
-        animatedComposable(Route.SUBTITLE_PREFERENCES) { SubtitlePreference { onBackPressed() } }
+        animatedComposable(Route.SUBTITLE_PREFERENCES) { SubtitlePreference { onNavigateBack() } }
         animatedComposable(Route.ABOUT) {
             AboutPage(
-                onBackPressed = { onBackPressed() },
-                onNavigateToCreditsPage = { navController.navigate(Route.CREDITS) },
-                onNavigateToUpdatePage = { navController.navigate(Route.AUTO_UPDATE) },
-                onNavigateToDonatePage = { navController.navigate(Route.DONATE) })
+                onNavigateBack = onNavigateBack,
+                onNavigateToCreditsPage = { onNavigateTo(Route.CREDITS) },
+                onNavigateToUpdatePage = { onNavigateTo(Route.AUTO_UPDATE) },
+                onNavigateToDonatePage = { onNavigateTo(Route.DONATE) })
         }
-        animatedComposable(Route.DONATE) { DonatePage { onBackPressed() } }
-        animatedComposable(Route.CREDITS) { CreditsPage { onBackPressed() } }
-        animatedComposable(Route.AUTO_UPDATE) { UpdatePage { onBackPressed() } }
-        animatedComposable(Route.APPEARANCE) { AppearancePreferences(navController) }
-        animatedComposable(Route.LANGUAGES) { LanguagePage { onBackPressed() } }
+        animatedComposable(Route.DONATE) { DonatePage(onNavigateBack) }
+        animatedComposable(Route.CREDITS) { CreditsPage(onNavigateBack) }
+        animatedComposable(Route.AUTO_UPDATE) { UpdatePage(onNavigateBack) }
+        animatedComposable(Route.APPEARANCE) {
+            AppearancePreferences(
+                onNavigateBack = onNavigateBack,
+                onNavigateTo = onNavigateTo
+            )
+        }
+        animatedComposable(Route.INTERACTION) { InteractionPreferencePage(onBack = onNavigateBack) }
+        animatedComposable(Route.LANGUAGES) { LanguagePage { onNavigateBack() } }
         animatedComposable(Route.DOWNLOAD_DIRECTORY) {
-            DownloadDirectoryPreferences { onBackPressed() }
+            DownloadDirectoryPreferences { onNavigateBack() }
         }
         animatedComposable(Route.TEMPLATE) {
-            TemplateListPage(onBackPressed = onBackPressed) {
-                navController.navigate(Route.TEMPLATE_EDIT id it)
+            TemplateListPage(onNavigateBack = onNavigateBack) {
+                onNavigateTo(Route.TEMPLATE_EDIT id it)
             }
         }
         animatedComposable(
             Route.TEMPLATE_EDIT arg Route.TEMPLATE_ID,
             arguments = listOf(navArgument(Route.TEMPLATE_ID) { type = NavType.IntType })
         ) {
-            TemplateEditPage(onBackPressed, it.arguments?.getInt(Route.TEMPLATE_ID) ?: -1)
+            TemplateEditPage(onNavigateBack, it.arguments?.getInt(Route.TEMPLATE_ID) ?: -1)
         }
-        animatedComposable(Route.DARK_THEME) { DarkThemePreferences { onBackPressed() } }
+        animatedComposable(Route.DARK_THEME) { DarkThemePreferences { onNavigateBack() } }
         animatedComposable(Route.NETWORK_PREFERENCES) {
             NetworkPreferences(navigateToCookieProfilePage = {
-                navController.navigate(Route.COOKIE_PROFILE)
-            }) { onBackPressed() }
+                onNavigateTo(Route.COOKIE_PROFILE)
+            }) { onNavigateBack() }
         }
         animatedComposable(Route.COOKIE_PROFILE) {
             CookieProfilePage(
                 cookiesViewModel = cookiesViewModel,
-                navigateToCookieGeneratorPage = { navController.navigate(Route.COOKIE_GENERATOR_WEBVIEW) },
-            ) { onBackPressed() }
+                navigateToCookieGeneratorPage = { onNavigateTo(Route.COOKIE_GENERATOR_WEBVIEW) },
+            ) { onNavigateBack() }
         }
         animatedComposable(
             Route.COOKIE_GENERATOR_WEBVIEW
         ) {
             WebViewPage(cookiesViewModel) {
-                onBackPressed()
+                onNavigateBack()
                 CookieManager.getInstance().flush()
             }
         }

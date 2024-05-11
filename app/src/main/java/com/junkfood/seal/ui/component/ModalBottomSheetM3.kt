@@ -50,7 +50,6 @@ fun SealModalBottomSheet(
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .fillMaxWidth()
         )
-
     }
 }
 

@@ -83,7 +83,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="unspecified"
-            android:theme="@style/Theme.Seal">
+            android:theme="@style/Theme.Seal.Splashscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -120,7 +120,7 @@
 
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.junkfood.seal.provider"
+            android:authorities="${applicationId}.provider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

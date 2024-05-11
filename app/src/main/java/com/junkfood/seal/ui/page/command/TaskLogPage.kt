@@ -54,7 +54,7 @@ private const val TAG = "TaskLogPage"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskLogPage(onBackPressed: () -> Unit, taskHashCode: Int) {
+fun TaskLogPage(onNavigateBack: () -> Unit, taskHashCode: Int) {
     Log.d(TAG, "TaskLogPage: $taskHashCode")
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val task = Downloader.mutableTaskList.values.find { it.hashCode() == taskHashCode } ?: return
@@ -70,7 +70,7 @@ fun TaskLogPage(onBackPressed: () -> Unit, taskHashCode: Int) {
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp)
                 )
             }, navigationIcon = {
-                IconButton(onClick = { onBackPressed() }) {
+                IconButton(onClick = { onNavigateBack() }) {
                     Icon(Icons.Outlined.Close, stringResource(R.string.close))
                 }
             }, actions = {
@@ -154,14 +154,17 @@ fun TaskLogPage(onBackPressed: () -> Unit, taskHashCode: Int) {
             modifier = Modifier
                 .padding(paddings)
                 .fillMaxSize()
-                .padding(horizontal = 24.dp)
                 .verticalScroll(scrollState)
-                .then(if (expandLog) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
-
         ) {
             SelectionContainer() {
                 Text(
-                    modifier = Modifier.padding(top = 12.dp),
+                    modifier = Modifier
+                        .run {
+                            if (expandLog) horizontalScroll(rememberScrollState())
+                            else this
+                        }
+                        .padding(top = 12.dp)
+                        .padding(horizontal = 20.dp),
                     text = task.output,
                     style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
                 )

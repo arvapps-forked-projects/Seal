@@ -2,6 +2,7 @@ package com.junkfood.seal.ui.component
 
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -50,7 +51,7 @@ fun VideoCard(
     showCancelButton: Boolean = false,
     onCancel: () -> Unit = {},
     onClick: () -> Unit = {},
-    progress: Float = 100f,
+    progress: Float = 90f,
     fileSizeApprox: Double = 1024 * 1024 * 69.0,
     duration: Int = 359,
     isPreview: Boolean = false
@@ -62,17 +63,20 @@ fun VideoCard(
     ) {
         Column {
             Box(Modifier.fillMaxWidth()) {
-                AsyncImageImpl(
-                    modifier = Modifier
-                        .padding()
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)
-                        .clip(MaterialTheme.shapes.small),
-                    model = thumbnailUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    isPreview = isPreview
-                )
+                Crossfade(targetState = thumbnailUrl, label = "") {
+                    AsyncImageImpl(
+                        modifier = Modifier
+                            .padding()
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)
+                            .clip(MaterialTheme.shapes.small),
+                        model = it,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        isPreview = isPreview
+                    )
+                }
+
                 Surface(
                     modifier = Modifier
                         .padding(4.dp)
@@ -142,7 +146,7 @@ fun VideoCard(
             }
             val progressAnimationValue by animateFloatAsState(
                 targetValue = progress,
-                animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec
+                animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec, label = ""
             )
             if (progress < 0f)
                 LinearProgressIndicator(
@@ -150,8 +154,9 @@ fun VideoCard(
                 )
             else
                 LinearProgressIndicator(
+                    progress = { progressAnimationValue / 100f },
                     modifier = Modifier.fillMaxWidth(),
-                    progress = progressAnimationValue / 100f,
+                    drawStopIndicator = null
                 )
         }
     }

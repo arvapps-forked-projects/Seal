@@ -9,7 +9,7 @@ import java.util.Locale
 
 
 @Composable
-@Deprecated("See Locale.toDisplayName()")
+@Deprecated(message = "See Locale.toDisplayName()", level = DeprecationLevel.HIDDEN)
 fun getLanguageDesc(language: Int): String {
     return stringResource(
         when (language) {
@@ -98,6 +98,11 @@ private const val PORTUGUESE_PORTUGAL = 38
 private const val CATALAN = 39
 private const val HEBREW = 40
 private const val PORTUGUESE = 41
+private const val THAI = 42
+private const val BENGALI = 43
+private const val KHMER = 44
+private const val KANNADA = 45
+private const val GREEK = 46
 
 val LocaleLanguageCodeMap =
     mapOf(
@@ -105,9 +110,10 @@ val LocaleLanguageCodeMap =
         Locale("az") to AZERBAIJANI,
         Locale("eu") to BASQUE,
         Locale("be") to BELARUSIAN,
+        Locale("bn") to BENGALI,
+        Locale("ca") to CATALAN,
         Locale.forLanguageTag("zh-Hans") to SIMPLIFIED_CHINESE,
         Locale.forLanguageTag("zh-Hant") to TRADITIONAL_CHINESE,
-        Locale("ca") to CATALAN,
         Locale("hr") to CROATIAN,
         Locale("cs") to CZECH,
         Locale("da") to DANISH,
@@ -116,12 +122,15 @@ val LocaleLanguageCodeMap =
         Locale("fil") to FILIPINO,
         Locale("fr") to FRENCH,
         Locale("de") to GERMAN,
+        Locale("el") to GREEK,
         Locale("he") to HEBREW,
         Locale("hi") to HINDI,
         Locale("hu") to HUNGARIAN,
         Locale("in") to INDONESIAN,
         Locale("it") to ITALIAN,
         Locale("ja") to JAPANESE,
+        Locale("kn") to KANNADA,
+        Locale("km") to KHMER,
         Locale("ko") to KOREAN,
         Locale("ms") to MALAY,
         Locale("ml") to MALAYALAM,
@@ -139,6 +148,7 @@ val LocaleLanguageCodeMap =
         Locale("es") to SPANISH,
         Locale("sv") to SWEDISH,
         Locale("ta") to TAMIL,
+        Locale("th") to THAI,
         Locale("tr") to TURKISH,
         Locale("uk") to UKRAINIAN,
         Locale("vi") to VIETNAMESE,
